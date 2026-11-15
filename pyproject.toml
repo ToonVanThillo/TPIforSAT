@@ -1,0 +1,35 @@
+[project]
+name = "tpi_for_sat"
+version = "0.1.0"
+requires-python = ">=3.14"
+
+[dependency-groups]
+dev = [
+    "pytest-homeassistant-custom-component",
+    "vtherm_api>=0.7.0",
+    "ruff",
+    "mypy",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+explicit_package_bases = true
+files = ["custom_components/tpi_for_sat", "tests"]
+
+[[tool.mypy.overrides]]
+module = "vtherm_api.*"
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = "pytest_homeassistant_custom_component.*"
+follow_untyped_imports = true

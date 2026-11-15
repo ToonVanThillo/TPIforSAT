@@ -1,0 +1,66 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TPI for SAT",
+        "description": "Select a Versatile Thermostat and set its valve control parameters.",
+        "data": {
+          "thermostat": "Thermostat",
+          "c_int": "Proportional gain (1/K)",
+          "k_i": "Integral gain (1/(K·h))",
+          "tau_leak_h": "Leak time constant (h)"
+        },
+        "data_description": {
+          "thermostat": "The Versatile Thermostat whose valves this algorithm drives. Select tpi_for_sat as its proportional function in VTherm.",
+          "c_int": "Valve opening per kelvin of room error.",
+          "k_i": "Rate at which the integral closes the valve above target.",
+          "tau_leak_h": "Time constant with which the integral leaks back to fully open."
+        }
+      }
+    },
+    "error": {
+      "invalid_thermostat": "The selected thermostat is not in the entity registry."
+    },
+    "abort": {
+      "already_configured": "This thermostat already has a TPI for SAT configuration."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TPI for SAT",
+        "data": {
+          "c_int": "[%key:component::tpi_for_sat::config::step::user::data::c_int%]",
+          "k_i": "[%key:component::tpi_for_sat::config::step::user::data::k_i%]",
+          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data::tau_leak_h%]"
+        },
+        "data_description": {
+          "c_int": "[%key:component::tpi_for_sat::config::step::user::data_description::c_int%]",
+          "k_i": "[%key:component::tpi_for_sat::config::step::user::data_description::k_i%]",
+          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data_description::tau_leak_h%]"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "integral": {
+        "name": "TPI for SAT integral",
+        "state_attributes": {
+          "e": {
+            "name": "Error"
+          },
+          "v_p": {
+            "name": "Unclamped valve demand"
+          },
+          "saturated": {
+            "name": "Saturated"
+          },
+          "on_percent": {
+            "name": "Valve demand"
+          }
+        }
+      }
+    }
+  }
+}

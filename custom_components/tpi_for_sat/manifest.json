@@ -1,0 +1,11 @@
+{
+  "domain": "tpi_for_sat",
+  "name": "TPI for SAT",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["versatile_thermostat"],
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "requirements": ["vtherm_api>=0.7.0"],
+  "version": "0.1.0"
+}
