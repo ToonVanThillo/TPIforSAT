@@ -69,7 +69,7 @@ class FakeThermostat:
 def make_tpi_entry(
     hass: HomeAssistant,
     unique_id: str = "vt-living",
-    options: dict[str, float] | None = None,
+    options: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> MockConfigEntry:
     """Add a tpi_for_sat entry for the thermostat; not set up yet."""

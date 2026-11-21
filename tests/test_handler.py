@@ -366,3 +366,171 @@ async def test_plain_reload_never_applies_defaults(
     assert "No tpi_for_sat config entry" not in caplog.text
     assert sent
     assert sent == [pytest.approx(0.6)] * len(sent)
+
+
+# --- Other-room term ---------------------------------------------------------
+
+
+def set_other(
+    hass: HomeAssistant,
+    entity_id: str,
+    target: Any,
+    current: Any,
+    state: str = "heat",
+) -> None:
+    attributes = {"temperature": target, "current_temperature": current}
+    hass.states.async_set(entity_id, state, attributes)
+
+
+def other_options(*climates: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "c_int": 2.0,
+        "k_i": 1.0,
+        "tau_leak_h": 8.0,
+        "other_enabled": True,
+        "other_climates": list(climates),
+        "e_start": 0.5,
+        "e_full": 1.0,
+        **extra,
+    }
+
+
+async def e_other_of(
+    hass: HomeAssistant, thermostat: FakeThermostat, options: dict[str, Any]
+) -> float | None:
+    await setup_entry(hass, make_tpi_entry(hass, options=options))
+    handler = await start_handler(hass, thermostat)
+    await handler.async_recalculate()
+    return thermostat.prop_algorithm.e_other  # type: ignore[no-any-return]
+
+
+async def test_e_other_is_the_largest_error_among_heating_other_climates(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 20.5)
+    set_other(hass, "climate.b", 21.0, 19.5)  # largest: 1.5
+    set_other(hass, "climate.c", 18.0, 21.0)  # negative error
+    options = other_options("climate.a", "climate.b", "climate.c")
+    assert await e_other_of(hass, thermostat, options) == pytest.approx(1.5)
+
+
+async def test_e_other_can_be_negative_when_all_other_rooms_are_warm(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 18.0, 21.0)
+    assert await e_other_of(
+        hass, thermostat, other_options("climate.a")
+    ) == pytest.approx(-3.0)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        ("climate.a", 21.0, 15.0, "off"),
+        ("climate.a", 21.0, 15.0, "cool"),
+        ("climate.a", 21.0, 15.0, "unavailable"),
+        ("climate.a", 21.0, 15.0, "unknown"),
+        ("climate.a", None, 15.0, "heat"),
+        ("climate.a", 21.0, None, "heat"),
+        ("climate.a", "21", 15.0, "heat"),
+        ("climate.a", 21.0, "unknown", "heat"),
+        ("climate.a", float("nan"), 15.0, "heat"),
+        ("climate.a", float("inf"), 15.0, "heat"),
+    ],
+)
+async def test_e_other_skips_other_climates_that_do_not_qualify(
+    hass: HomeAssistant, thermostat: FakeThermostat, state: tuple[Any, ...]
+) -> None:
+    set_other(hass, *state)
+    assert await e_other_of(hass, thermostat, other_options("climate.a")) is None
+
+
+async def test_e_other_skips_climate_without_the_attributes(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    hass.states.async_set("climate.a", "heat", {})
+    assert await e_other_of(hass, thermostat, other_options("climate.a")) is None
+
+
+async def test_e_other_skips_missing_entity_but_uses_the_others(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.b", 21.0, 20.0)
+    options = other_options("climate.ghost", "climate.b")
+    assert await e_other_of(hass, thermostat, options) == pytest.approx(1.0)
+
+
+async def test_e_other_is_none_for_empty_list(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 15.0)
+    assert await e_other_of(hass, thermostat, other_options()) is None
+
+
+async def test_e_other_is_none_when_term_disabled(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 15.0)
+    options = other_options("climate.a", other_enabled=False)
+    assert await e_other_of(hass, thermostat, options) is None
+
+
+async def test_legacy_entry_without_other_room_options_still_works(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    # Options as stored before the other-room term existed.
+    thermostat.current_temperature = 20.1
+    options = {"c_int": 2.0, "k_i": 1.0, "tau_leak_h": 8.0}
+    assert await e_other_of(hass, thermostat, options) is None
+    assert thermostat.prop_algorithm.on_percent == pytest.approx(0.8)
+
+
+async def test_cold_other_room_closes_valve_of_this_room_slightly_above_target(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 20.0)  # e_other = 1.0 = e_full
+    await setup_entry(hass, make_tpi_entry(hass, options=other_options("climate.a")))
+    handler = await start_handler(hass, thermostat)
+    thermostat.current_temperature = 20.1  # e = -0.1, I = 0: v_p = 1 - 0.2 - 1
+    await handler.async_recalculate()
+    assert thermostat.prop_algorithm.on_percent == 0.0
+    assert thermostat.prop_algorithm.t_o == pytest.approx(-1.0)
+
+
+async def test_direct_calculate_by_vtherm_reads_current_other_room_state(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 20.9)
+    await setup_entry(hass, make_tpi_entry(hass, options=other_options("climate.a")))
+    await start_handler(hass, thermostat)
+    algorithm = thermostat.prop_algorithm
+    algorithm.calculate(20.0, 20.1, 5.0, 0.0, "heat")
+    assert algorithm.e_other == pytest.approx(0.1)
+    set_other(hass, "climate.a", 21.0, 20.0)
+    algorithm.calculate(20.0, 20.1, 5.0, 0.0, "heat")
+    assert algorithm.e_other == pytest.approx(1.0)
+
+
+async def test_periodic_tick_picks_up_other_room_changes(
+    hass: HomeAssistant, thermostat: FakeThermostat, freezer: Any
+) -> None:
+    set_other(hass, "climate.a", 21.0, 20.9)
+    await setup_entry(hass, make_tpi_entry(hass, options=other_options("climate.a")))
+    await start_handler(hass, thermostat)
+    set_other(hass, "climate.a", 21.0, 19.0)
+    await tick(hass, freezer, 300)
+    assert thermostat.prop_algorithm.e_other == pytest.approx(2.0)
+
+
+async def test_other_room_state_change_alone_triggers_no_recalculation(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    set_other(hass, "climate.a", 21.0, 20.9)
+    await setup_entry(hass, make_tpi_entry(hass, options=other_options("climate.a")))
+    handler = await start_handler(hass, thermostat)
+    await handler.async_recalculate()
+    calls = thermostat.async_control_heating.await_count
+    set_other(hass, "climate.a", 21.0, 15.0)
+    await hass.async_block_till_done()
+    assert thermostat.async_control_heating.await_count == calls
+    assert thermostat.prop_algorithm.e_other == pytest.approx(0.1)  # still stale

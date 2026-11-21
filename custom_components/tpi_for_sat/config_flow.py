@@ -1,7 +1,7 @@
 """Config flow for TPI for SAT: one entry per Versatile Thermostat."""
 
 import math
-from typing import Any
+from typing import Any, cast
 
 import probatio
 from homeassistant.components.climate.const import DOMAIN as CLIMATE_DOMAIN
@@ -17,9 +17,13 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_C_INT,
+    CONF_E_FULL,
+    CONF_E_START,
     CONF_K_I,
+    CONF_OTHER_CLIMATES,
+    CONF_OTHER_ENABLED,
     CONF_TAU_LEAK_H,
-    DEFAULT_PARAMETERS,
+    DEFAULT_OPTIONS,
     DOMAIN,
     VTHERM_DOMAIN,
 )
@@ -46,14 +50,29 @@ def _number(minimum: float) -> probatio.All[float]:
     )
 
 
-PARAMETERS_SCHEMA = probatio.Schema(
-    {
-        probatio.Required(CONF_C_INT): _number(0),
-        probatio.Required(CONF_K_I): _number(0),
-        # At least 1 h so the leak step stays accurate at the 0.5 h dt cap.
-        probatio.Required(CONF_TAU_LEAK_H): _number(1.0),
-    }
-)
+def _options_schema(thermostat: str | None = None) -> probatio.Schema:
+    """Return the options form; `thermostat` is left out of the other climates."""
+    return probatio.Schema(
+        {
+            probatio.Required(CONF_C_INT): _number(0),
+            probatio.Required(CONF_K_I): _number(0),
+            # At least 1 h so the leak step stays accurate at the 0.5 h dt cap.
+            probatio.Required(CONF_TAU_LEAK_H): _number(1.0),
+            probatio.Required(CONF_OTHER_ENABLED): selector.BooleanSelector(),
+            probatio.Optional(
+                CONF_OTHER_CLIMATES, default=list
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=CLIMATE_DOMAIN,
+                    multiple=True,
+                    exclude_entities=[thermostat] if thermostat is not None else [],
+                )
+            ),
+            probatio.Required(CONF_E_START): _number(0),
+            probatio.Required(CONF_E_FULL): _number(0),
+        }
+    )
+
 
 USER_SCHEMA = probatio.Schema(
     {
@@ -63,7 +82,19 @@ USER_SCHEMA = probatio.Schema(
             )
         )
     }
-).extend(PARAMETERS_SCHEMA.schema)
+).extend(_options_schema().schema)
+
+
+def _other_room_errors(
+    user_input: dict[str, Any], thermostat: str | None
+) -> dict[str, str]:
+    """Return the form errors of the other-room fields; None skips the climate check."""
+    errors: dict[str, str] = {}
+    if user_input[CONF_E_START] >= user_input[CONF_E_FULL]:
+        errors[CONF_E_FULL] = "invalid_e_range"
+    if thermostat in user_input[CONF_OTHER_CLIMATES]:
+        errors[CONF_OTHER_CLIMATES] = "other_includes_thermostat"
+    return errors
 
 
 class TpiForSatConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -88,16 +119,18 @@ class TpiForSatConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(reg_entry.unique_id)
                 self._abort_if_unique_id_configured()
-                state = self.hass.states.get(entity_id)
-                return self.async_create_entry(
-                    title=state.name if state is not None else entity_id,
-                    data={},
-                    options={key: user_input[key] for key in DEFAULT_PARAMETERS},
-                )
+                errors = _other_room_errors(user_input, entity_id)
+                if not errors:
+                    state = self.hass.states.get(entity_id)
+                    return self.async_create_entry(
+                        title=state.name if state is not None else entity_id,
+                        data={},
+                        options={key: user_input[key] for key in DEFAULT_OPTIONS},
+                    )
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(
-                USER_SCHEMA, user_input or DEFAULT_PARAMETERS
+                USER_SCHEMA, user_input or DEFAULT_OPTIONS
             ),
             errors=errors,
         )
@@ -115,12 +148,21 @@ class TpiForSatOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the parameters, prefilled with the current options."""
+        """Show the parameters, prefilled with the current options or defaults."""
+        errors: dict[str, str] = {}
+        thermostat = er.async_get(self.hass).async_get_entity_id(
+            CLIMATE_DOMAIN, VTHERM_DOMAIN, cast(str, self.config_entry.unique_id)
+        )
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            # The selector already excludes the thermostat.
+            errors = _other_room_errors(user_input, None)
+            if not errors:
+                return self.async_create_entry(data=user_input)
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                PARAMETERS_SCHEMA, self.config_entry.options
+                _options_schema(thermostat),
+                user_input or {**DEFAULT_OPTIONS, **self.config_entry.options},
             ),
+            errors=errors,
         )

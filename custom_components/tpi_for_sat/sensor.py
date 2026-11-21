@@ -80,12 +80,14 @@ class IntegralSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """e, v_p and saturated of the latest update, and the algorithm's on_percent."""
+        """e, e_other, t_o, v_p and saturated of the latest update, and on_percent."""
         algorithm = self._algorithm
         if algorithm is None:
             return None
         return {
             "e": algorithm.e,
+            "e_other": algorithm.e_other,
+            "t_o": algorithm.t_o,
             "v_p": algorithm.v_p,
             "saturated": algorithm.saturated,
             "on_percent": algorithm.on_percent,

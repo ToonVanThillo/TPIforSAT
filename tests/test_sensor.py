@@ -97,3 +97,36 @@ async def test_sensor_is_per_entry(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("sensor", "tpi_for_sat", "vt-living_integral")
     assert registry.async_get_entity_id("sensor", "tpi_for_sat", "vt-bedroom_integral")
+
+
+async def test_sensor_attributes_include_other_room_term_and_none_while_frozen(
+    hass: HomeAssistant, thermostat: FakeThermostat
+) -> None:
+    hass.states.async_set(
+        "climate.a", "heat", {"temperature": 21.0, "current_temperature": 20.25}
+    )
+    options = {
+        "c_int": 2.0,
+        "k_i": 1.0,
+        "tau_leak_h": 8.0,
+        "other_enabled": True,
+        "other_climates": ["climate.a"],
+        "e_start": 0.5,
+        "e_full": 1.0,
+    }
+    await setup_entry(hass, make_tpi_entry(hass, options=options))
+    handler = await start_handler(hass, thermostat)
+    await handler.async_recalculate()  # e_other = 0.75 -> T_o = -0.5
+    await hass.async_block_till_done()
+    state = hass.states.get(sensor_entity_id(hass))
+    assert state is not None
+    assert state.attributes["e_other"] == pytest.approx(0.75)
+    assert state.attributes["t_o"] == pytest.approx(-0.5)
+
+    thermostat.vtherm_hvac_mode = "off"
+    await handler.async_recalculate()
+    await hass.async_block_till_done()
+    state = hass.states.get(sensor_entity_id(hass))
+    assert state is not None
+    assert state.attributes["e_other"] is None
+    assert state.attributes["t_o"] is None

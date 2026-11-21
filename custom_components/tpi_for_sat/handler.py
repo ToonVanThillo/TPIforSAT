@@ -1,10 +1,14 @@
 """VTherm handler around SatTpiAlgorithm: parameters, persistence, periodic update."""
 
 import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from homeassistant.components.climate.const import ATTR_CURRENT_TEMPERATURE, HVACMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_TEMPERATURE
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
@@ -13,7 +17,14 @@ from homeassistant.util.hass_dict import HassKey
 from vtherm_api.interfaces import InterfaceCycleScheduler, InterfaceThermostatRuntime
 
 from .algo import SatTpiAlgorithm
-from .const import DEFAULT_PARAMETERS, DOMAIN, signal_updated
+from .const import (
+    CONF_OTHER_CLIMATES,
+    CONF_OTHER_ENABLED,
+    DEFAULT_OPTIONS,
+    DEFAULT_PARAMETERS,
+    DOMAIN,
+    signal_updated,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +63,8 @@ class SatTpiHandler:
         self._thermostat = thermostat
         self._hass = thermostat.hass
         self._unique_id = thermostat.unique_id
-        self._algorithm = SatTpiAlgorithm()
+        self._other_climates: Sequence[str] = ()
+        self._algorithm = SatTpiAlgorithm(other_error=self._other_error)
         self._store: Store[StoredState] = Store(
             self._hass, STORAGE_VERSION, f"{DOMAIN}.{self._unique_id}"
         )
@@ -77,9 +89,10 @@ class SatTpiHandler:
         self._notify()
 
     def apply_entry(self, entry: ConfigEntry | None) -> None:
-        """Set the parameters from the entry's options, or the defaults if None.
+        """Set the parameters and other climates from the entry's options.
 
-        The integral is kept. Raises ValueError if tau_leak_h isn't positive.
+        Uses the defaults if None. The integral is kept. Raises ValueError as
+        SatTpiAlgorithm.set_parameters.
         """
         if entry is None:
             _LOGGER.warning(
@@ -87,10 +100,15 @@ class SatTpiHandler:
                 self._thermostat.name,
                 DOMAIN,
             )
-            parameters = DEFAULT_PARAMETERS
+            options = DEFAULT_OPTIONS
         else:
-            parameters = {**DEFAULT_PARAMETERS, **entry.options}
-        self._algorithm.set_parameters(**parameters)
+            options = {**DEFAULT_OPTIONS, **entry.options}
+        self._algorithm.set_parameters(
+            **{key: options[key] for key in DEFAULT_PARAMETERS}
+        )
+        self._other_climates = (
+            options[CONF_OTHER_CLIMATES] if options[CONF_OTHER_ENABLED] else ()
+        )
 
     async def async_added_to_hass(self) -> None:
         """Restore I handed over by a removed handler, else from the Store.
@@ -197,6 +215,25 @@ class SatTpiHandler:
         await t.async_control_heating()
         t.update_custom_attributes()
         t.async_write_ha_state()
+
+    def _other_error(self) -> float | None:
+        """Return the largest target - current of the other climates, or None.
+
+        Counts climates in heat mode reporting a numeric target and current
+        temperature; missing or unavailable entities are skipped.
+        """
+        errors: list[float] = []
+        for entity_id in self._other_climates:
+            state = self._hass.states.get(entity_id)
+            if state is None or state.state != HVACMode.HEAT:
+                continue
+            target = state.attributes.get(ATTR_TEMPERATURE)
+            current = state.attributes.get(ATTR_CURRENT_TEMPERATURE)
+            if isinstance(target, int | float) and isinstance(current, int | float):
+                error = float(target - current)
+                if math.isfinite(error):
+                    errors.append(error)
+        return max(errors, default=None)
 
     async def _async_tick(self, now: datetime) -> None:
         """Periodic update, so the leak reaches the valve in a steady room."""

@@ -8,18 +8,28 @@
           "thermostat": "Thermostat",
           "c_int": "Proportional gain (1/K)",
           "k_i": "Integral gain (1/(K·h))",
-          "tau_leak_h": "Leak time constant (h)"
+          "tau_leak_h": "Leak time constant (h)",
+          "other_enabled": "Other-room term",
+          "other_climates": "Other climates",
+          "e_start": "Other-room error to start closing (K)",
+          "e_full": "Other-room error to close fully (K)"
         },
         "data_description": {
           "thermostat": "The Versatile Thermostat whose valves this algorithm drives. Select tpi_for_sat as its proportional function in VTherm.",
           "c_int": "Valve opening per kelvin of room error.",
           "k_i": "Rate at which the integral closes the valve above target.",
-          "tau_leak_h": "Time constant with which the integral leaks back to fully open."
+          "tau_leak_h": "Time constant with which the integral leaks back to fully open.",
+          "other_enabled": "Close this valve in advance when another room is cold, as SAT then raises the flow temperature.",
+          "other_climates": "Climates of the other rooms on the same boiler. Only those in heat mode with a target and current temperature count.",
+          "e_start": "Largest error among the other climates at which this valve starts to close.",
+          "e_full": "Largest error among the other climates at which this valve is closed at target. Must be greater than the start error."
         }
       }
     },
     "error": {
-      "invalid_thermostat": "The selected thermostat is not in the entity registry."
+      "invalid_thermostat": "The selected thermostat is not in the entity registry.",
+      "invalid_e_range": "The error to close fully must be greater than the error to start closing.",
+      "other_includes_thermostat": "The other climates may not include the thermostat itself."
     },
     "abort": {
       "already_configured": "This thermostat already has a TPI for SAT configuration."
@@ -32,14 +42,25 @@
         "data": {
           "c_int": "[%key:component::tpi_for_sat::config::step::user::data::c_int%]",
           "k_i": "[%key:component::tpi_for_sat::config::step::user::data::k_i%]",
-          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data::tau_leak_h%]"
+          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data::tau_leak_h%]",
+          "other_enabled": "[%key:component::tpi_for_sat::config::step::user::data::other_enabled%]",
+          "other_climates": "[%key:component::tpi_for_sat::config::step::user::data::other_climates%]",
+          "e_start": "[%key:component::tpi_for_sat::config::step::user::data::e_start%]",
+          "e_full": "[%key:component::tpi_for_sat::config::step::user::data::e_full%]"
         },
         "data_description": {
           "c_int": "[%key:component::tpi_for_sat::config::step::user::data_description::c_int%]",
           "k_i": "[%key:component::tpi_for_sat::config::step::user::data_description::k_i%]",
-          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data_description::tau_leak_h%]"
+          "tau_leak_h": "[%key:component::tpi_for_sat::config::step::user::data_description::tau_leak_h%]",
+          "other_enabled": "[%key:component::tpi_for_sat::config::step::user::data_description::other_enabled%]",
+          "other_climates": "[%key:component::tpi_for_sat::config::step::user::data_description::other_climates%]",
+          "e_start": "[%key:component::tpi_for_sat::config::step::user::data_description::e_start%]",
+          "e_full": "[%key:component::tpi_for_sat::config::step::user::data_description::e_full%]"
         }
       }
+    },
+    "error": {
+      "invalid_e_range": "[%key:component::tpi_for_sat::config::error::invalid_e_range%]"
     }
   },
   "entity": {
@@ -49,6 +70,12 @@
         "state_attributes": {
           "e": {
             "name": "Error"
+          },
+          "e_other": {
+            "name": "Largest other-room error"
+          },
+          "t_o": {
+            "name": "Other-room term"
           },
           "v_p": {
             "name": "Unclamped valve demand"
