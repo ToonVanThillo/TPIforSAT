@@ -1,6 +1,5 @@
 """Config flow for TPI for SAT: one entry per Versatile Thermostat."""
 
-import math
 from typing import Any, cast
 
 import probatio
@@ -31,22 +30,12 @@ from .const import (
 CONF_THERMOSTAT = "thermostat"
 
 
-def _finite(value: float) -> float:
-    """Reject NaN and infinity, which pass NumberSelector's bounds check."""
-    if not math.isfinite(value):
-        raise probatio.Invalid("Value must be finite")
-    return value
-
-
-def _number(minimum: float) -> probatio.All[float]:
-    """Return a finite free-entry number box with a lower bound."""
-    return probatio.All(
-        selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=minimum, step="any", mode=selector.NumberSelectorMode.BOX
-            )
-        ),
-        _finite,
+def _number(minimum: float) -> selector.NumberSelector:
+    """Return a free-entry number box with a lower bound."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=minimum, step="any", mode=selector.NumberSelectorMode.BOX
+        )
     )
 
 
@@ -88,7 +77,7 @@ USER_SCHEMA = probatio.Schema(
 def _other_room_errors(
     user_input: dict[str, Any], thermostat: str | None
 ) -> dict[str, str]:
-    """Return the form errors of the other-room fields; None skips the climate check."""
+    """Return errors for e_start >= e_full and thermostat in other_climates (if set)."""
     errors: dict[str, str] = {}
     if user_input[CONF_E_START] >= user_input[CONF_E_FULL]:
         errors[CONF_E_FULL] = "invalid_e_range"

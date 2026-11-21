@@ -1,6 +1,5 @@
 """Config and options flow."""
 
-import math
 from collections.abc import Callable
 from typing import Any
 
@@ -8,6 +7,8 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.tpi_for_sat.algo import SatTpiAlgorithm
 from custom_components.tpi_for_sat.const import DOMAIN
@@ -119,26 +120,6 @@ async def test_user_flow_rejects_out_of_range_parameters(
         )
 
 
-@pytest.mark.parametrize("name", ["c_int", "k_i", "tau_leak_h"])
-@pytest.mark.parametrize("bad", [math.nan, math.inf])
-async def test_flows_reject_non_finite_parameters(
-    hass: HomeAssistant, register_climate: Callable[..., str], name: str, bad: float
-) -> None:
-    entity_id = register_climate()
-    result = await _start(hass)
-    with pytest.raises(InvalidData):
-        await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"thermostat": entity_id, **PARAMS, name: bad}
-        )
-    entry = make_tpi_entry(hass, "vt-other")
-    await setup_entry(hass, entry)
-    options = await hass.config_entries.options.async_init(entry.entry_id)
-    with pytest.raises(InvalidData):
-        await hass.config_entries.options.async_configure(
-            options["flow_id"], {**PARAMS, name: bad}
-        )
-
-
 @pytest.mark.parametrize("good", [{"c_int": 0.0}, {"k_i": 0.0}, {"tau_leak_h": 1.0}])
 async def test_user_flow_accepts_parameter_lower_bounds(
     hass: HomeAssistant, register_climate: Callable[..., str], good: dict[str, float]
@@ -198,6 +179,12 @@ async def test_user_flow_rejects_e_start_not_below_e_full(
     assert result["step_id"] == "user"
     assert result["errors"] == {"e_full": "invalid_e_range"}
     assert hass.config_entries.async_entries(DOMAIN) == []
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"thermostat": entity_id, **PARAMS}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == PARAMS
 
 
 async def test_user_flow_rejects_thermostat_among_other_climates(
@@ -284,22 +271,21 @@ async def test_flows_require_other_room_fields(
 
 
 @pytest.mark.parametrize("name", ["e_start", "e_full"])
-@pytest.mark.parametrize("bad", [-0.1, math.nan, math.inf])
-async def test_flows_reject_negative_or_non_finite_e_values(
-    hass: HomeAssistant, register_climate: Callable[..., str], name: str, bad: float
+async def test_flows_reject_negative_e_values(
+    hass: HomeAssistant, register_climate: Callable[..., str], name: str
 ) -> None:
     entity_id = register_climate()
     result = await _start(hass)
     with pytest.raises(InvalidData):
         await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"thermostat": entity_id, **PARAMS, name: bad}
+            result["flow_id"], {"thermostat": entity_id, **PARAMS, name: -0.1}
         )
     entry = make_tpi_entry(hass, "vt-other")
     await setup_entry(hass, entry)
     options = await hass.config_entries.options.async_init(entry.entry_id)
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
-            options["flow_id"], {**PARAMS, name: bad}
+            options["flow_id"], {**PARAMS, name: -0.1}
         )
 
 
@@ -415,3 +401,57 @@ async def test_options_flow_applies_other_climates_live_without_resetting_integr
     assert algorithm.e_other == pytest.approx(1.0)
     # v_p = 1 - 0.2 + clamp(-0.4 - 1) = -0.2
     assert algorithm.on_percent == 0.0
+
+
+# --- Frontend serialization through HA's HTTP views -------------------------
+
+
+async def test_user_form_and_its_error_form_are_served_by_the_http_endpoint(
+    hass: HomeAssistant,
+    register_climate: Callable[..., str],
+    hass_client: ClientSessionGenerator,
+) -> None:
+    entity_id = register_climate()
+    assert await async_setup_component(hass, "config", {})
+    client = await hass_client()
+    response = await client.post(
+        "/api/config/config_entries/flow", json={"handler": DOMAIN}
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["step_id"] == "user"
+    assert {f["name"] for f in body["data_schema"]} >= {"thermostat", "c_int"}
+
+    response = await client.post(
+        f"/api/config/config_entries/flow/{body['flow_id']}",
+        json={"thermostat": entity_id, **PARAMS, "e_start": 2.0},
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["errors"] == {"e_full": "invalid_e_range"}
+    assert {f["name"] for f in body["data_schema"]} >= {"thermostat", "c_int"}
+
+
+async def test_options_form_and_its_error_form_are_served_by_the_http_endpoint(
+    hass: HomeAssistant, hass_client: ClientSessionGenerator
+) -> None:
+    assert await async_setup_component(hass, "config", {})
+    entry = make_tpi_entry(hass)
+    await setup_entry(hass, entry)
+    client = await hass_client()
+    response = await client.post(
+        "/api/config/config_entries/options/flow", json={"handler": entry.entry_id}
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["step_id"] == "init"
+    assert {f["name"] for f in body["data_schema"]} >= {"c_int", "other_climates"}
+
+    response = await client.post(
+        f"/api/config/config_entries/options/flow/{body['flow_id']}",
+        json={**PARAMS, "e_start": 2.0},
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["errors"] == {"e_full": "invalid_e_range"}
+    assert {f["name"] for f in body["data_schema"]} >= {"c_int", "other_climates"}
