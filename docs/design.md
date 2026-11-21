@@ -76,10 +76,6 @@ These are configuration, not code, but they change what the valve actually does:
 - `auto_regulation_period_min` (default 5 min): rate limit on valve commands.
 - Min/max opening degrees and opening threshold remap `on_percent` before it reaches the TRV.
 
-## Out of scope (v1)
-
-- A "reset integral" service.
-- Trimming SAT's curve from valve positions (the "most-open valve" automation). This lives in HA YAML, outside this plugin.
 
 ## Known issues
 
